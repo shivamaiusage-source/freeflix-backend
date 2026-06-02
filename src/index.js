@@ -15,25 +15,26 @@ const PORT = process.env.PORT || 3000;
 
 app.use(helmet());
 app.use(cors({
-  origin: ['http://localhost:4200', 'https://shivamsingh.website'],
+  origin: [
+    'http://localhost:4200',
+    'https://shivamsingh.website',
+    'https://www.shivamsingh.website'
+  ],
   credentials: true
 }));
 app.use(morgan('dev'));
 app.use(express.json());
 
-// Routes
 app.use('/api/auth',    authRoutes);
 app.use('/api/videos',  videoRoutes);
 app.use('/api/history', historyRoutes);
 app.use('/api/ratings', ratingRoutes);
 app.use('/api/mylist',  mylistRoutes);
 
-// Health check
 app.get('/', (req, res) => {
   res.json({ message: 'FreeFlix API is running 🎬' });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
   res.status(500).json({ error: 'Something went wrong', message: err.message });
