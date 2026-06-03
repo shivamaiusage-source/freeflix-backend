@@ -9,6 +9,7 @@ const videoRoutes   = require('./routes/video.routes');
 const historyRoutes = require('./routes/history.routes');
 const ratingRoutes  = require('./routes/rating.routes');
 const mylistRoutes  = require('./routes/mylist.routes');
+const ragRoutes     = require('./rag/routes/rag.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -30,6 +31,7 @@ app.use('/api/videos',  videoRoutes);
 app.use('/api/history', historyRoutes);
 app.use('/api/ratings', ratingRoutes);
 app.use('/api/mylist',  mylistRoutes);
+app.use('/api/rag',     ragRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'FreeFlix API is running 🎬' });
