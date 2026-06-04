@@ -1,5 +1,5 @@
 const pool = require('../../config/db');
-const pdfParse = require('pdf-parse');
+const pdfParse = require('pdf-parse/lib/pdf-parse.js');
 const { v4: uuidv4 } = require('uuid');
 const PORTFOLIO_KNOWLEDGE = require('../portfolio-knowledge');
 
@@ -26,12 +26,12 @@ async function generateContent(prompt) {
 // ── HELPER: Call Gemini embedding API via REST ──
 async function getEmbedding(text) {
   const res = await fetch(
-    `${GEMINI_BASE}/v1beta/models/gemini-embedding-exp-03-07:embedContent?key=${GEMINI_API_KEY}`,
+    `${GEMINI_BASE}/v1beta/models/gemini-embedding-2:embedContent?key=${GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'models/gemini-embedding-exp-03-07',
+        model: 'models/gemini-embedding-2',
         content: { parts: [{ text }] }
       })
     }
