@@ -2,11 +2,12 @@ const pool = require('../../config/db');
 const pdfParse = require('pdf-parse/lib/pdf-parse.js');
 const { v4: uuidv4 } = require('uuid');
 const PORTFOLIO_KNOWLEDGE = require('../portfolio-knowledge');
+const { generateWithFallback, getCurrentModel } = require('../model-fallback');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com';
 
-// ── HELPER: Remove null bytes and invalid chars ──
+// ── HELPER: Remove null bytes ──
 function sanitizeText(text) {
   return text
     .replace(/\u0000/g, '')
@@ -15,8 +16,8 @@ function sanitizeText(text) {
     .trim();
 }
 
-// ── HELPER: Split text into overlapping chunks ──
-function splitIntoChunks(text, chunkSize = 500, overlap = 50) {
+// ── HELPER: Split text into chunks ──
+function splitIntoChunks(text, chunkSize = 600, overlap = 80) {
   const words = text.split(/\s+/);
   const chunks = [];
   for (let i = 0; i < words.length; i += chunkSize - overlap) {
@@ -27,24 +28,7 @@ function splitIntoChunks(text, chunkSize = 500, overlap = 50) {
   return chunks;
 }
 
-// ── HELPER: Call Gemini generate API via REST ──
-async function generateContent(prompt) {
-  const res = await fetch(
-    `${GEMINI_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }]
-      })
-    }
-  );
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message);
-  return data.candidates[0].content.parts[0].text;
-}
-
-// ── HELPER: Get embedding from Gemini ──
+// ── HELPER: Get embedding ──
 async function getEmbedding(text) {
   const cleanText = sanitizeText(text);
   const res = await fetch(
@@ -63,6 +47,15 @@ async function getEmbedding(text) {
   return data.embedding.values;
 }
 
+// ── HELPER: Sleep ──
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── GET CURRENT MODEL STATUS ──
+const getModelStatus = (req, res) => {
+  const model = getCurrentModel();
+  res.json({ model: model.name, modelId: model.id });
+};
+
 // ── UPLOAD PDF ──
 const uploadPdf = async (req, res) => {
   try {
@@ -72,40 +65,34 @@ const uploadPdf = async (req, res) => {
     const filename = req.file.originalname;
 
     const pdfData = await pdfParse(req.file.buffer);
-    const rawText = pdfData.text;
+    const text = sanitizeText(pdfData.text);
     const pageCount = pdfData.numpages;
 
-    // Sanitize full text first
-    const text = sanitizeText(rawText);
-
-    if (!text || text.length < 50) {
-      return res.status(400).json({ error: 'PDF appears to be empty or unreadable' });
-    }
+    if (!text || text.length < 50)
+      return res.status(400).json({ error: 'PDF appears empty or unreadable' });
 
     const docResult = await pool.query(
       'INSERT INTO rag_documents (session_id, filename, page_count) VALUES ($1, $2, $3) RETURNING id',
       [sessionId, filename, pageCount]
     );
     const documentId = docResult.rows[0].id;
-
-    const chunks = splitIntoChunks(text, 500, 50);
+    const chunks = splitIntoChunks(text, 600, 80);
 
     let processed = 0;
     for (const chunk of chunks) {
       try {
         const cleanChunk = sanitizeText(chunk);
         if (cleanChunk.length < 20) continue;
-
         const embedding = await getEmbedding(cleanChunk);
         const vectorStr = `[${embedding.join(',')}]`;
-
         await pool.query(
           'INSERT INTO rag_chunks (document_id, session_id, content, embedding) VALUES ($1, $2, $3, $4)',
           [documentId, sessionId, cleanChunk, vectorStr]
         );
         processed++;
-      } catch (embErr) {
-        console.error('Embedding error:', embErr.message);
+        await sleep(300); // 300ms between embeddings
+      } catch (err) {
+        console.error('Embedding error:', err.message);
       }
     }
 
@@ -127,12 +114,11 @@ const uploadPdf = async (req, res) => {
 const pdfChat = async (req, res) => {
   try {
     const { question, sessionId } = req.body;
-    if (!question || !sessionId) {
-      return res.status(400).json({ error: 'Question and sessionId are required' });
-    }
+    if (!question || !sessionId)
+      return res.status(400).json({ error: 'Question and sessionId required' });
 
-    const cleanQuestion = sanitizeText(question);
-    const questionEmbedding = await getEmbedding(cleanQuestion);
+    const cleanQ = sanitizeText(question);
+    const questionEmbedding = await getEmbedding(cleanQ);
     const vectorStr = `[${questionEmbedding.join(',')}]`;
 
     const result = await pool.query(
@@ -141,33 +127,28 @@ const pdfChat = async (req, res) => {
        FROM rag_chunks
        WHERE session_id = $2
        ORDER BY embedding <=> $1::vector
-       LIMIT 5`,
+       LIMIT 4`,
       [vectorStr, sessionId]
     );
 
-    if (result.rows.length === 0) {
-      return res.json({
-        answer: "I couldn't find any relevant content. Please upload a PDF first.",
-        sources: []
-      });
-    }
+    if (result.rows.length === 0)
+      return res.json({ answer: "No relevant content found. Please upload a PDF first.", sources: [] });
 
     const context = result.rows
       .map((row, i) => `[Excerpt ${i + 1}]:\n${row.content}`)
       .join('\n\n');
 
-    const prompt = `You are a helpful document assistant. Answer based ONLY on the document excerpts below.
+    const prompt = `You are a helpful document assistant. Answer based ONLY on the excerpts below.
 If the answer is not in the excerpts, say "I couldn't find that in the document."
-Be specific and cite which excerpt supports your answer.
 
 DOCUMENT EXCERPTS:
 ${context}
 
-USER QUESTION: ${cleanQuestion}
+USER QUESTION: ${cleanQ}
 
-Provide a clear, helpful answer.`;
+Provide a clear, helpful answer with citations.`;
 
-    const answer = await generateContent(prompt);
+    const result2 = await generateWithFallback(prompt);
 
     const sources = result.rows.map((row, i) => ({
       excerpt: i + 1,
@@ -176,7 +157,12 @@ Provide a clear, helpful answer.`;
       page: row.page_number
     }));
 
-    res.json({ answer, sources });
+    res.json({
+      answer: result2.text,
+      sources,
+      model: result2.model,      // ← send model name to frontend
+      switched: result2.switched  // ← true if fallback was used
+    });
 
   } catch (err) {
     console.error('PDF chat error:', err.message);
@@ -188,12 +174,12 @@ Provide a clear, helpful answer.`;
 const portfolioChat = async (req, res) => {
   try {
     const { question } = req.body;
-    if (!question) return res.status(400).json({ error: 'Question is required' });
+    if (!question) return res.status(400).json({ error: 'Question required' });
 
-    const prompt = `You are Shivam Singh's personal portfolio assistant — friendly, knowledgeable, and professional.
+    const prompt = `You are Shivam Singh's personal portfolio assistant — friendly, knowledgeable, professional.
 Answer questions about Shivam based ONLY on the knowledge base below.
-If asked something not covered, say you don't have that info and suggest contacting Shivam at shivamsinghitwork@gmail.com.
-Keep answers conversational but detailed. Use specific numbers and technical details when available.
+If not covered, suggest contacting Shivam at shivamsinghitwork@gmail.com.
+Be conversational but detailed. Use specific numbers and technical details.
 
 KNOWLEDGE BASE:
 ${PORTFOLIO_KNOWLEDGE}
@@ -202,8 +188,13 @@ USER QUESTION: ${sanitizeText(question)}
 
 Answer helpfully and specifically.`;
 
-    const answer = await generateContent(prompt);
-    res.json({ answer });
+    const result = await generateWithFallback(prompt);
+
+    res.json({
+      answer: result.text,
+      model: result.model,      // ← send model name to frontend
+      switched: result.switched  // ← true if fallback was used
+    });
 
   } catch (err) {
     console.error('Portfolio chat error:', err.message);
@@ -236,4 +227,4 @@ const cleanupSessions = async (req, res) => {
   }
 };
 
-module.exports = { uploadPdf, pdfChat, portfolioChat, getDocuments, cleanupSessions };
+module.exports = { uploadPdf, pdfChat, portfolioChat, getDocuments, cleanupSessions, getModelStatus };
