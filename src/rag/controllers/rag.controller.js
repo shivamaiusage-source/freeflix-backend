@@ -6,6 +6,27 @@ const PORTFOLIO_KNOWLEDGE = require('../portfolio-knowledge');
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_BASE = 'https://generativelanguage.googleapis.com';
 
+// ── HELPER: Remove null bytes and invalid chars ──
+function sanitizeText(text) {
+  return text
+    .replace(/\u0000/g, '')
+    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/\uFFFD/g, '')
+    .trim();
+}
+
+// ── HELPER: Split text into overlapping chunks ──
+function splitIntoChunks(text, chunkSize = 500, overlap = 50) {
+  const words = text.split(/\s+/);
+  const chunks = [];
+  for (let i = 0; i < words.length; i += chunkSize - overlap) {
+    const chunk = words.slice(i, i + chunkSize).join(' ');
+    if (chunk.trim().length > 50) chunks.push(chunk);
+    if (i + chunkSize >= words.length) break;
+  }
+  return chunks;
+}
+
 // ── HELPER: Call Gemini generate API via REST ──
 async function generateContent(prompt) {
   const res = await fetch(
@@ -23,8 +44,9 @@ async function generateContent(prompt) {
   return data.candidates[0].content.parts[0].text;
 }
 
-// ── HELPER: Call Gemini embedding API via REST ──
+// ── HELPER: Get embedding from Gemini ──
 async function getEmbedding(text) {
+  const cleanText = sanitizeText(text);
   const res = await fetch(
     `${GEMINI_BASE}/v1beta/models/gemini-embedding-2:embedContent?key=${GEMINI_API_KEY}`,
     {
@@ -32,25 +54,13 @@ async function getEmbedding(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'models/gemini-embedding-2',
-        content: { parts: [{ text }] }
+        content: { parts: [{ text: cleanText }] }
       })
     }
   );
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
   return data.embedding.values;
-}
-
-// ── HELPER: Split text into chunks ──
-function splitIntoChunks(text, chunkSize = 500, overlap = 50) {
-  const words = text.split(/\s+/);
-  const chunks = [];
-  for (let i = 0; i < words.length; i += chunkSize - overlap) {
-    const chunk = words.slice(i, i + chunkSize).join(' ');
-    if (chunk.trim().length > 50) chunks.push(chunk);
-    if (i + chunkSize >= words.length) break;
-  }
-  return chunks;
 }
 
 // ── UPLOAD PDF ──
@@ -62,10 +72,13 @@ const uploadPdf = async (req, res) => {
     const filename = req.file.originalname;
 
     const pdfData = await pdfParse(req.file.buffer);
-    const text = pdfData.text;
+    const rawText = pdfData.text;
     const pageCount = pdfData.numpages;
 
-    if (!text || text.trim().length < 50) {
+    // Sanitize full text first
+    const text = sanitizeText(rawText);
+
+    if (!text || text.length < 50) {
       return res.status(400).json({ error: 'PDF appears to be empty or unreadable' });
     }
 
@@ -80,11 +93,15 @@ const uploadPdf = async (req, res) => {
     let processed = 0;
     for (const chunk of chunks) {
       try {
-        const embedding = await getEmbedding(chunk);
+        const cleanChunk = sanitizeText(chunk);
+        if (cleanChunk.length < 20) continue;
+
+        const embedding = await getEmbedding(cleanChunk);
         const vectorStr = `[${embedding.join(',')}]`;
+
         await pool.query(
           'INSERT INTO rag_chunks (document_id, session_id, content, embedding) VALUES ($1, $2, $3, $4)',
-          [documentId, sessionId, chunk, vectorStr]
+          [documentId, sessionId, cleanChunk, vectorStr]
         );
         processed++;
       } catch (embErr) {
@@ -114,7 +131,8 @@ const pdfChat = async (req, res) => {
       return res.status(400).json({ error: 'Question and sessionId are required' });
     }
 
-    const questionEmbedding = await getEmbedding(question);
+    const cleanQuestion = sanitizeText(question);
+    const questionEmbedding = await getEmbedding(cleanQuestion);
     const vectorStr = `[${questionEmbedding.join(',')}]`;
 
     const result = await pool.query(
@@ -145,7 +163,7 @@ Be specific and cite which excerpt supports your answer.
 DOCUMENT EXCERPTS:
 ${context}
 
-USER QUESTION: ${question}
+USER QUESTION: ${cleanQuestion}
 
 Provide a clear, helpful answer.`;
 
@@ -180,7 +198,7 @@ Keep answers conversational but detailed. Use specific numbers and technical det
 KNOWLEDGE BASE:
 ${PORTFOLIO_KNOWLEDGE}
 
-USER QUESTION: ${question}
+USER QUESTION: ${sanitizeText(question)}
 
 Answer helpfully and specifically.`;
 
