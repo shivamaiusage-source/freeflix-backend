@@ -30,7 +30,7 @@ function splitIntoChunks(text, chunkSize = 500, overlap = 50) {
 // ── HELPER: Call Gemini generate API via REST ──
 async function generateContent(prompt) {
   const res = await fetch(
-    `${GEMINI_BASE}/v1beta/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+    `${GEMINI_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
