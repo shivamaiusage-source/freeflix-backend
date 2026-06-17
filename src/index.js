@@ -9,7 +9,8 @@ const videoRoutes   = require('./routes/video.routes');
 const historyRoutes = require('./routes/history.routes');
 const ratingRoutes  = require('./routes/rating.routes');
 const mylistRoutes  = require('./routes/mylist.routes');
-const ragRoutes     = require('./rag/routes/rag.routes');
+const ragRoutes        = require('./rag/routes/rag.routes');
+const monitoringRoutes = require('./monitoring/monitoring.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,17 +22,22 @@ app.use(cors({
     'https://shivamsingh.website',
     'https://www.shivamsingh.website'
   ],
-  credentials: true
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'session-id']
 }));
 app.use(morgan('dev'));
 app.use(express.json());
+const staticHeaders = require('./middleware/static-headers');
+app.use(staticHeaders);
+app.use(express.static('public'));
 
 app.use('/api/auth',    authRoutes);
 app.use('/api/videos',  videoRoutes);
 app.use('/api/history', historyRoutes);
 app.use('/api/ratings', ratingRoutes);
 app.use('/api/mylist',  mylistRoutes);
-app.use('/api/rag',     ragRoutes);
+app.use('/api/rag',        ragRoutes);
+app.use('/api/monitoring', monitoringRoutes);
 
 app.get('/', (req, res) => {
   res.json({ message: 'FreeFlix API is running 🎬' });
