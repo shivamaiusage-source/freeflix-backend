@@ -127,6 +127,7 @@
     const origPush = history.pushState.bind(history);
     history.pushState = function (...args) {
       origPush(...args);
+      currentApp = getApp();
       recordNav();
     };
 
@@ -134,6 +135,7 @@
     const origReplace = history.replaceState.bind(history);
     history.replaceState = function (...args) {
       origReplace(...args);
+      currentApp = getApp();
       recordNav();
     };
 
@@ -141,7 +143,8 @@
     window.addEventListener('popstate', recordNav);
 
     // Record initial page
-    recordNav();
+    currentApp = getApp();
+      recordNav();
   }
 
   // ── CAPTURE JS ERRORS ──
