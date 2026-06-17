@@ -1,17 +1,17 @@
 (function () {
   'use strict';
 
-  // ── CONFIG ──
-  const API_BASE = window.location.hostname === 'localhost' ? 'http://localhost:3000/api/monitoring' : 'https://api.shivamsingh.website/api/monitoring';
-  const FLUSH_INTERVAL = 5000; // send events every 5 seconds
+  const API_BASE = window.location.hostname === 'localhost'
+    ? 'http://localhost:3000/api/monitoring'
+    : 'https://api.shivamsingh.website/api/monitoring';
+
+  const FLUSH_INTERVAL = 5000;
   const MAX_TARGET_LEN = 100;
 
-  // ── STATE ──
   const sessionId = generateId();
   let eventBuffer = [];
-  let flushTimer = null;
+  let currentApp = getApp(); // ← declared here
 
-  // ── HELPERS ──
   function generateId() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
       const r = Math.random() * 16 | 0;
@@ -23,9 +23,9 @@
 
   function getApp() {
     const path = window.location.pathname;
-    if (path.startsWith('/freeflix')) return 'FreeFlix';
-    if (path.startsWith('/rag'))      return 'RAG';
-    if (path.startsWith('/monitoring')) return 'Monitoring';
+    if (path.startsWith('/freeflix'))    return 'FreeFlix';
+    if (path.startsWith('/rag'))         return 'RAG';
+    if (path.startsWith('/monitoring'))  return 'Monitoring';
     return 'Portfolio';
   }
 
@@ -44,12 +44,10 @@
     eventBuffer.push({ ...event, ts: now() });
   }
 
-  // ── FLUSH TO BACKEND ──
   async function flush() {
     if (!eventBuffer.length) return;
     const events = [...eventBuffer];
     eventBuffer = [];
-
     try {
       await fetch(`${API_BASE}/events`, {
         method: 'POST',
@@ -57,12 +55,9 @@
         body: JSON.stringify({ sessionId, events }),
         keepalive: true
       });
-    } catch (err) {
-      // silently fail — don't break the host app
-    }
+    } catch (err) {}
   }
 
-  // ── INIT SESSION ──
   async function initSession() {
     try {
       await fetch(`${API_BASE}/session`, {
@@ -70,7 +65,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           id:        sessionId,
-          app:       getApp(),
+          app:       currentApp,
           origin:    window.location.origin,
           userAgent: navigator.userAgent,
           screenW:   window.screen.width,
@@ -78,12 +73,9 @@
           startedAt: new Date().toISOString()
         })
       });
-    } catch (err) {
-      // silently fail
-    }
+    } catch (err) {}
   }
 
-  // ── CAPTURE CLICKS ──
   function captureClicks() {
     document.addEventListener('click', e => {
       push({
@@ -95,65 +87,54 @@
     }, { passive: true });
   }
 
-  // ── CAPTURE SCROLL ──
   function captureScroll() {
     let lastScroll = 0;
     document.addEventListener('scroll', () => {
       const t = now();
-      if (t - lastScroll < 500) return; // throttle 500ms
+      if (t - lastScroll < 500) return;
       lastScroll = t;
       push({
         type:  'scroll',
         value: {
           scrollY: Math.round(window.scrollY),
-          scrollX: Math.round(window.scrollX),
-          depth:   Math.round((window.scrollY / (document.body.scrollHeight - window.innerHeight)) * 100) || 0
+          depth:   Math.round((window.scrollY / (document.body.scrollHeight - window.innerHeight || 1)) * 100) || 0
         }
       });
     }, { passive: true });
   }
 
-  // ── CAPTURE NAVIGATION (SPA route changes) ──
   function captureNavigation() {
     function recordNav() {
+      currentApp = getApp(); // ← update app on every navigation
       push({
-        type:  'nav',
+        type:   'nav',
         target: window.location.pathname,
-        value: { app: getApp(), href: window.location.href }
+        value:  { app: currentApp, href: window.location.href }
       });
     }
 
-    // Patch pushState
     const origPush = history.pushState.bind(history);
     history.pushState = function (...args) {
       origPush(...args);
-      currentApp = getApp();
       recordNav();
     };
 
-    // Patch replaceState
     const origReplace = history.replaceState.bind(history);
     history.replaceState = function (...args) {
       origReplace(...args);
-      currentApp = getApp();
       recordNav();
     };
 
-    // Back/forward
     window.addEventListener('popstate', recordNav);
-
-    // Record initial page
-    currentApp = getApp();
-      recordNav();
+    recordNav(); // record initial page
   }
 
-  // ── CAPTURE JS ERRORS ──
   function captureErrors() {
     window.addEventListener('error', e => {
       push({
-        type:  'error',
+        type:   'error',
         target: e.filename || 'unknown',
-        value: {
+        value:  {
           message: e.message?.slice(0, 200),
           line:    e.lineno,
           col:     e.colno,
@@ -164,35 +145,24 @@
 
     window.addEventListener('unhandledrejection', e => {
       push({
-        type:  'error',
+        type:   'error',
         target: 'unhandledrejection',
-        value: {
-          message: String(e.reason)?.slice(0, 200)
-        }
+        value:  { message: String(e.reason)?.slice(0, 200) }
       });
     });
   }
 
-  // ── CAPTURE DOM MUTATIONS ──
   function captureMutations() {
     const observer = new MutationObserver(mutations => {
       const significant = mutations.filter(m =>
         m.addedNodes.length > 0 || m.removedNodes.length > 0
       );
       if (!significant.length) return;
-      push({
-        type:  'dom',
-        value: { mutations: significant.length }
-      });
+      push({ type: 'dom', value: { mutations: significant.length } });
     });
-
-    observer.observe(document.body, {
-      childList: true,
-      subtree:   true
-    });
+    observer.observe(document.body, { childList: true, subtree: true });
   }
 
-  // ── FLUSH ON PAGE HIDE ──
   function capturePageHide() {
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') flush();
@@ -201,7 +171,6 @@
     window.addEventListener('pagehide', flush);
   }
 
-  // ── START ──
   async function start() {
     await initSession();
     captureClicks();
@@ -210,14 +179,10 @@
     captureErrors();
     captureMutations();
     capturePageHide();
-
-    // Flush every 5 seconds
-    flushTimer = setInterval(flush, FLUSH_INTERVAL);
-
-    console.debug(`[Monitor] session=${sessionId} app=${getApp()}`);
+    setInterval(flush, FLUSH_INTERVAL);
+    console.debug(`[Monitor] session=${sessionId} app=${currentApp}`);
   }
 
-  // Wait for DOM ready
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', start);
   } else {
