@@ -168,3 +168,55 @@ INTERVIEW TALKING POINTS:
 `;
 
 module.exports = PORTFOLIO_KNOWLEDGE;
+
+MONITORING DASHBOARD PROJECT:
+What: Framework-agnostic session replay and analytics platform
+Live URL: shivamsingh.website/monitoring
+Status: Live and working
+Similar to: Hotjar, Microsoft Clarity, FullStory
+
+Architecture:
+- recorder.js: Standalone vanilla JS script injected via single script tag in index.html
+- Works in ANY framework — Angular, React, Vue, or plain HTML
+- No SDK needed — just one script tag like Google Analytics
+
+What recorder.js captures:
+- Clicks — element tag, class, text, x/y coordinates
+- Scroll — scroll depth percentage, position
+- Navigation — SPA route changes via history.pushState patch
+- DOM mutations — MutationObserver for dynamic content changes
+- JS Errors — window.onerror + unhandledrejection
+
+How it works:
+- Generates UUID session ID on page load
+- Batches events locally every 5 seconds then flushes to backend
+- Detects current app from URL path (FreeFlix, RAG, Portfolio)
+- Uses keepalive:true on beforeunload to ensure final flush
+
+Backend API routes:
+- POST /api/monitoring/session — create session record
+- POST /api/monitoring/events — batch insert events
+- GET /api/monitoring/sessions — list all sessions with filters
+- GET /api/monitoring/sessions/:id — get session + all events for replay
+- GET /api/monitoring/stats — aggregate stats
+
+Database schema:
+- mon_sessions: id, app, origin, user_agent, screen dimensions, duration, click/page/error counts
+- mon_events: id, session_id, type, timestamp, x, y, target element, value (JSONB)
+
+Angular Dashboard features:
+- SaaS-style light theme with sidebar navigation
+- Stats bar: total sessions, clicks, errors, avg duration
+- App distribution bars: Portfolio vs FreeFlix vs RAG
+- Session table with filters by app + errors only
+- Session detail page with event timeline scrubber
+- Navigation path visualization showing pages visited in order
+- Click map showing x/y coordinates of all clicks
+- Event list filterable by type with timestamps
+
+Why this is impressive:
+- Framework-agnostic design (not tied to Angular)
+- Same architecture as Hotjar and Microsoft Clarity
+- Built on real Cavisson Systems APM experience
+- Real data — actually monitors shivamsingh.website live
+- PostgreSQL for storage — no third party analytics service needed
