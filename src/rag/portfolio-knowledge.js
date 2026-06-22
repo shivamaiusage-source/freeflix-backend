@@ -165,9 +165,6 @@ INTERVIEW TALKING POINTS:
 - RAG system shows AI integration skills beyond basic ChatGPT wrapper
 - Full stack — owns entire product from DB schema to UI animations
 - All projects deployed and live — not just GitHub repos
-`;
-
-module.exports = PORTFOLIO_KNOWLEDGE;
 
 MONITORING DASHBOARD PROJECT:
 What: Framework-agnostic session replay and analytics platform
@@ -220,3 +217,6 @@ Why this is impressive:
 - Built on real Cavisson Systems APM experience
 - Real data — actually monitors shivamsingh.website live
 - PostgreSQL for storage — no third party analytics service needed
+`;
+
+module.exports = PORTFOLIO_KNOWLEDGE;
