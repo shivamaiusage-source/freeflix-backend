@@ -136,6 +136,7 @@ const getStats = async (req, res) => {
         COALESCE(AVG(duration_ms), 0)     AS avg_duration_ms,
         COUNT(*) FILTER (WHERE app = 'FreeFlix')   AS freeflix_sessions,
         COUNT(*) FILTER (WHERE app = 'RAG')        AS rag_sessions,
+        COUNT(*) FILTER (WHERE app = 'Monitoring') AS monitoring_sessions
         COUNT(*) FILTER (WHERE app = 'Portfolio')  AS portfolio_sessions
       FROM mon_sessions
     `);
@@ -148,3 +149,18 @@ const getStats = async (req, res) => {
 };
 
 module.exports = { createSession, addEvents, getSessions, getSessionEvents, getStats };
+
+// ── UPDATE SESSION APP ──
+const updateSessionApp = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { app } = req.body;
+    if (!app) return res.status(400).json({ error: 'app required' });
+    await pool.query('UPDATE mon_sessions SET app = $1 WHERE id = $2', [app, id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { createSession, addEvents, getSessions, getSessionEvents, getStats, updateSessionApp };

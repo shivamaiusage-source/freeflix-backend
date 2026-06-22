@@ -7,10 +7,10 @@
 
   const FLUSH_INTERVAL = 5000;
   const MAX_TARGET_LEN = 100;
-
   const sessionId = generateId();
   let eventBuffer = [];
-  let currentApp = getApp(); // ← declared here
+  let currentApp = getApp();
+  let sessionCreated = false;
 
   function generateId() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -23,9 +23,9 @@
 
   function getApp() {
     const path = window.location.pathname;
-    if (path.startsWith('/freeflix'))    return 'FreeFlix';
-    if (path.startsWith('/rag'))         return 'RAG';
-    if (path.startsWith('/monitoring'))  return 'Monitoring';
+    if (path.startsWith('/freeflix'))   return 'FreeFlix';
+    if (path.startsWith('/rag'))        return 'RAG';
+    if (path.startsWith('/monitoring')) return 'Monitoring';
     return 'Portfolio';
   }
 
@@ -64,26 +64,34 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id:        sessionId,
-          app:       currentApp,
-          origin:    window.location.origin,
+          id: sessionId, app: currentApp,
+          origin: window.location.origin,
           userAgent: navigator.userAgent,
-          screenW:   window.screen.width,
-          screenH:   window.screen.height,
+          screenW: window.screen.width,
+          screenH: window.screen.height,
           startedAt: new Date().toISOString()
         })
+      });
+      sessionCreated = true;
+    } catch (err) {}
+  }
+
+  // Update session app in backend when user navigates to a different section
+  async function updateSessionApp(newApp) {
+    if (!sessionCreated || newApp === currentApp) return;
+    try {
+      await fetch(`${API_BASE}/session/${sessionId}/app`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ app: newApp })
       });
     } catch (err) {}
   }
 
   function captureClicks() {
     document.addEventListener('click', e => {
-      push({
-        type:   'click',
-        x:      Math.round(e.clientX),
-        y:      Math.round(e.clientY),
-        target: sanitizeTarget(e.target)
-      });
+      push({ type: 'click', x: Math.round(e.clientX), y: Math.round(e.clientY),
+        target: sanitizeTarget(e.target) });
     }, { passive: true });
   }
 
@@ -93,70 +101,49 @@
       const t = now();
       if (t - lastScroll < 500) return;
       lastScroll = t;
-      push({
-        type:  'scroll',
-        value: {
-          scrollY: Math.round(window.scrollY),
-          depth:   Math.round((window.scrollY / (document.body.scrollHeight - window.innerHeight || 1)) * 100) || 0
-        }
-      });
+      push({ type: 'scroll', value: {
+        scrollY: Math.round(window.scrollY),
+        depth: Math.round((window.scrollY / (document.body.scrollHeight - window.innerHeight || 1)) * 100) || 0
+      }});
     }, { passive: true });
   }
 
   function captureNavigation() {
     function recordNav() {
-      currentApp = getApp(); // ← update app on every navigation
-      push({
-        type:   'nav',
-        target: window.location.pathname,
-        value:  { app: currentApp, href: window.location.href }
-      });
+      const newApp = getApp();
+      if (newApp !== currentApp) {
+        updateSessionApp(newApp);
+        currentApp = newApp;
+      }
+      push({ type: 'nav', target: window.location.pathname,
+        value: { app: currentApp, href: window.location.href } });
     }
 
     const origPush = history.pushState.bind(history);
-    history.pushState = function (...args) {
-      origPush(...args);
-      recordNav();
-    };
+    history.pushState = function (...args) { origPush(...args); recordNav(); };
 
     const origReplace = history.replaceState.bind(history);
-    history.replaceState = function (...args) {
-      origReplace(...args);
-      recordNav();
-    };
+    history.replaceState = function (...args) { origReplace(...args); recordNav(); };
 
     window.addEventListener('popstate', recordNav);
-    recordNav(); // record initial page
+    recordNav();
   }
 
   function captureErrors() {
     window.addEventListener('error', e => {
-      push({
-        type:   'error',
-        target: e.filename || 'unknown',
-        value:  {
-          message: e.message?.slice(0, 200),
-          line:    e.lineno,
-          col:     e.colno,
-          stack:   e.error?.stack?.slice(0, 500)
-        }
-      });
+      push({ type: 'error', target: e.filename || 'unknown',
+        value: { message: e.message?.slice(0, 200), line: e.lineno, col: e.colno,
+          stack: e.error?.stack?.slice(0, 500) } });
     });
-
     window.addEventListener('unhandledrejection', e => {
-      push({
-        type:   'error',
-        target: 'unhandledrejection',
-        value:  { message: String(e.reason)?.slice(0, 200) }
-      });
+      push({ type: 'error', target: 'unhandledrejection',
+        value: { message: String(e.reason)?.slice(0, 200) } });
     });
   }
 
   function captureMutations() {
     const observer = new MutationObserver(mutations => {
-      const significant = mutations.filter(m =>
-        m.addedNodes.length > 0 || m.removedNodes.length > 0
-      );
+      const significant = mutations.filter(m => m.addedNodes.length > 0 || m.removedNodes.length > 0);
       if (!significant.length) return;
       push({ type: 'dom', value: { mutations: significant.length } });
     });
@@ -180,7 +167,6 @@
     captureMutations();
     capturePageHide();
     setInterval(flush, FLUSH_INTERVAL);
-    console.debug(`[Monitor] session=${sessionId} app=${currentApp}`);
   }
 
   if (document.readyState === 'loading') {
@@ -188,5 +174,4 @@
   } else {
     start();
   }
-
 })();
