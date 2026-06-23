@@ -12,7 +12,6 @@ const createSession = async (req, res) => {
        ON CONFLICT (id) DO NOTHING`,
       [id, app, origin, userAgent, screenW, screenH, startedAt || new Date()]
     );
-
     res.json({ ok: true });
   } catch (err) {
     console.error('createSession error:', err.message);
@@ -26,20 +25,19 @@ const addEvents = async (req, res) => {
     const { sessionId, events } = req.body;
     if (!sessionId || !events?.length) return res.json({ ok: true });
 
-    // Insert events
     for (const e of events) {
       await pool.query(
         `INSERT INTO mon_events (session_id, type, ts, x, y, target, value)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [sessionId, e.type, e.ts, e.x || null, e.y || null, e.target || null, e.value ? JSON.stringify(e.value) : null]
+        [sessionId, e.type, e.ts, e.x || null, e.y || null, e.target || null,
+         e.value ? JSON.stringify(e.value) : null]
       );
     }
 
-    // Update session counters + duration
-    const clicks  = events.filter(e => e.type === 'click').length;
-    const errors  = events.filter(e => e.type === 'error').length;
-    const navs    = events.filter(e => e.type === 'nav').length;
-    const lastTs  = Math.max(...events.map(e => e.ts));
+    const clicks = events.filter(e => e.type === 'click').length;
+    const errors = events.filter(e => e.type === 'error').length;
+    const navs   = events.filter(e => e.type === 'nav').length;
+    const lastTs = Math.max(...events.map(e => e.ts));
 
     await pool.query(
       `UPDATE mon_sessions SET
@@ -101,8 +99,7 @@ const getSessionEvents = async (req, res) => {
     const { id } = req.params;
 
     const session = await pool.query(
-      'SELECT * FROM mon_sessions WHERE id = $1',
-      [id]
+      'SELECT * FROM mon_sessions WHERE id = $1', [id]
     );
 
     if (!session.rows.length) {
@@ -110,14 +107,10 @@ const getSessionEvents = async (req, res) => {
     }
 
     const events = await pool.query(
-      'SELECT * FROM mon_events WHERE session_id = $1 ORDER BY ts ASC',
-      [id]
+      'SELECT * FROM mon_events WHERE session_id = $1 ORDER BY ts ASC', [id]
     );
 
-    res.json({
-      session: session.rows[0],
-      events: events.rows
-    });
+    res.json({ session: session.rows[0], events: events.rows });
   } catch (err) {
     console.error('getSessionEvents error:', err.message);
     res.status(500).json({ error: err.message });
@@ -129,26 +122,23 @@ const getStats = async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        COUNT(*)                          AS total_sessions,
-        COALESCE(SUM(click_count), 0)     AS total_clicks,
-        COALESCE(SUM(error_count), 0)     AS total_errors,
-        COALESCE(SUM(page_count), 0)      AS total_navigations,
-        COALESCE(AVG(duration_ms), 0)     AS avg_duration_ms,
-        COUNT(*) FILTER (WHERE app = 'FreeFlix')   AS freeflix_sessions,
-        COUNT(*) FILTER (WHERE app = 'RAG')        AS rag_sessions,
-        COUNT(*) FILTER (WHERE app = 'Monitoring') AS monitoring_sessions
-        COUNT(*) FILTER (WHERE app = 'Portfolio')  AS portfolio_sessions
+        COUNT(*)                                              AS total_sessions,
+        COALESCE(SUM(click_count), 0)                        AS total_clicks,
+        COALESCE(SUM(error_count), 0)                        AS total_errors,
+        COALESCE(SUM(page_count), 0)                         AS total_navigations,
+        COALESCE(AVG(duration_ms), 0)                        AS avg_duration_ms,
+        COUNT(*) FILTER (WHERE app = 'FreeFlix')             AS freeflix_sessions,
+        COUNT(*) FILTER (WHERE app = 'RAG')                  AS rag_sessions,
+        COUNT(*) FILTER (WHERE app = 'Portfolio')            AS portfolio_sessions,
+        COUNT(*) FILTER (WHERE app = 'Monitoring')           AS monitoring_sessions
       FROM mon_sessions
     `);
-
     res.json(result.rows[0]);
   } catch (err) {
     console.error('getStats error:', err.message);
     res.status(500).json({ error: err.message });
   }
 };
-
-module.exports = { createSession, addEvents, getSessions, getSessionEvents, getStats };
 
 // ── UPDATE SESSION APP ──
 const updateSessionApp = async (req, res) => {
@@ -163,4 +153,19 @@ const updateSessionApp = async (req, res) => {
   }
 };
 
-module.exports = { createSession, addEvents, getSessions, getSessionEvents, getStats, updateSessionApp };
+// ── CLEANUP OLD SESSIONS ──
+const cleanupSessions = async (req, res) => {
+  try {
+    await pool.query(
+      "DELETE FROM mon_sessions WHERE started_at < NOW() - INTERVAL '30 days'"
+    );
+    res.json({ message: 'Cleanup complete' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = {
+  createSession, addEvents, getSessions,
+  getSessionEvents, getStats, updateSessionApp, cleanupSessions
+};
